@@ -32,6 +32,7 @@
 #include <unordered_map>
 #include <algorithm>
 #include <string>
+#include <stdexcept>
 
 extern "C" {
 #define __STDC_CONSTANT_MACROS  // Required for libavutil
@@ -943,6 +944,13 @@ inline AVPixelFormat get_av_pixel_format_from_string(const std::string & str)
   std::string upperCaseStr = str;
   std::transform(upperCaseStr.begin(), upperCaseStr.end(), upperCaseStr.begin(), ::toupper);
 
+  // MJPG/MJPEG are compressed V4L2 stream formats, not FFmpeg AVPixelFormats.
+  // Map them to AV_PIX_FMT_NONE so callers fall back to safe defaults instead
+  // of dereferencing a missing map entry.
+  if (upperCaseStr == "MJPG" || upperCaseStr == "MJPEG") {
+    return AV_PIX_FMT_NONE;
+  }
+
   std::string fullFmtStr;
   if (upperCaseStr.rfind("AV_PIX_FMT_", 0) == std::string::npos) {
     // passed string does not start with 'AV_PIX_FMT_'
@@ -951,7 +959,11 @@ inline AVPixelFormat get_av_pixel_format_from_string(const std::string & str)
     fullFmtStr = upperCaseStr;
   }
 
-  return STR_2_AVPIXFMT.find(fullFmtStr)->second;
+  auto it = STR_2_AVPIXFMT.find(fullFmtStr);
+  if (it == STR_2_AVPIXFMT.end()) {
+    throw std::invalid_argument("Unsupported av_device_format: '" + str + "'");
+  }
+  return it->second;
 }
 
 

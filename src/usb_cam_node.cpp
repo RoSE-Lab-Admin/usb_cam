@@ -184,7 +184,7 @@ void UsbCamNode::init()
 
   // if pixel format is equal to 'mjpeg', i.e. raw mjpeg stream, initialize compressed image message
   // and publisher
-  if (m_parameters.pixel_format_name == "mjpeg") {
+  if (m_parameters.pixel_format_name == "raw_mjpeg") {
     m_compressed_img_msg.reset(new sensor_msgs::msg::CompressedImage());
     m_compressed_img_msg->header.frame_id = m_parameters.frame_id;
     m_compressed_image_publisher =
@@ -214,6 +214,12 @@ void UsbCamNode::init()
 
   // configure the camera
   m_camera->configure(m_parameters, io_method);
+
+  if (m_parameters.pixel_format_name == "raw_mjpeg") {
+    // Latch the upper-bound buffer size now, before any frames are grabbed.
+    // The real per-frame JPEG length varies and will always be <= this bound.
+    m_compressed_img_max_size = m_camera->get_image_size_in_bytes();
+  }
 
   set_v4l2_params();
 
@@ -410,14 +416,17 @@ bool UsbCamNode::take_and_send_image()
 
 bool UsbCamNode::take_and_send_image_mjpeg()
 {
-  // Only resize if required
-  if (sizeof(m_compressed_img_msg->data) != m_camera->get_image_size_in_bytes()) {
+  // Ensure the buffer is large enough for the worst-case frame size before grabbing.
+  if (m_compressed_img_msg->data.size() < m_compressed_img_max_size) {
     m_compressed_img_msg->format = "jpeg";
-    m_compressed_img_msg->data.resize(m_camera->get_image_size_in_bytes());
+    m_compressed_img_msg->data.resize(m_compressed_img_max_size);
   }
 
   // grab the image, pass image msg buffer to fill
   m_camera->get_image(reinterpret_cast<char *>(&m_compressed_img_msg->data[0]));
+
+  // shrink to the actual number of bytes captured for this frame
+  m_compressed_img_msg->data.resize(m_camera->get_image_size_in_bytes());
 
   auto stamp = m_camera->get_image_timestamp();
   m_compressed_img_msg->header.stamp.sec = stamp.tv_sec;
@@ -448,7 +457,7 @@ void UsbCamNode::update()
     // If the camera exposure longer higher than the framerate period
     // then that caps the framerate.
     // auto t0 = now();
-    bool isSuccessful = (m_parameters.pixel_format_name == "mjpeg") ?
+    bool isSuccessful = (m_parameters.pixel_format_name == "raw_mjpeg") ?
       take_and_send_image_mjpeg() :
       take_and_send_image();
     if (!isSuccessful) {
@@ -459,7 +468,7 @@ void UsbCamNode::update()
 
 void UsbCamNode::publish()
 {
-  if (m_parameters.pixel_format_name == "mjpeg") {
+  if (m_parameters.pixel_format_name == "raw_mjpeg") {
     m_compressed_image_publisher->publish(*m_compressed_img_msg);
     m_compressed_cam_info_publisher->publish(*m_camera_info_msg);
   } else {
